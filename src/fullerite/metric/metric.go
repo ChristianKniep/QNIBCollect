@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -13,10 +14,14 @@ const (
 	Gauge             = "gauge"
 	Counter           = "counter"
 	CumulativeCounter = "cumcounter"
+	MaxGauge          = "gauge_max"
+	MinGauge          = "gauge_min"
+	Time              = "time"
 )
 
 // Metric type holds all the information for a single metric data
 // point. Metrics are generated in collectors and passed to handlers.
+// AggEnabled: If true handler should downsample the list of metrics to a single metric
 type Metric struct {
 	Name       string            `json:"name"`
 	MetricType string            `json:"type"`
@@ -24,6 +29,54 @@ type Metric struct {
 	Dimensions map[string]string `json:"dimensions"`
 	Buffered   bool              `json:"buffered"`
 	Time       time.Time         `json:"time"`
+	AggEnabled bool              `json:"agg-enabled"`
+}
+
+// AggregateList metrics of the same Name, Type and Dimension according
+// TODO: Should be done by the buffer instead each time when AggregateList is called
+func AggregateList(ms []Metric) []Metric {
+	var res []Metric
+	var cache map[string][]Metric
+	var mid string
+	// iterate through metrics and create a filter if no filter present
+	for _, m := range ms {
+		mid = m.GetFilterID()
+		_, ok := cache[mid]
+		if !ok {
+			cache[mid] = []Metric{}
+		}
+		cache[mid] = append(cache[mid], m)
+	}
+
+	for _, ms := range cache {
+		fm := ms[0]
+		var sum, avg float64
+		if fm.MetricType == "gauge" {
+			sum = 0
+			for _, m := range ms {
+				sum += m.Value
+			}
+			avg = sum / float64(len(ms))
+			nm := NewExt(fm.Name, fm.MetricType, avg, fm.Dimensions, fm.Time, false)
+			res = append(res, nm)
+		}
+	}
+	return res
+}
+
+// GetFilterID provides an identifier for a given metric
+func (m *Metric) GetFilterID() string {
+	res := fmt.Sprintf("%s_%s", m.Name, m.MetricType)
+	dims := []string{}
+	for k := range m.Dimensions {
+		dims = append(dims, k)
+	}
+	sort.Strings(dims)
+	for _, d := range dims {
+		res = res + fmt.Sprintf("_%s:%s", d, m.Dimensions[d])
+	}
+	return res
+
 }
 
 // New returns a new metric with name. Default metric type is "gauge"
@@ -36,6 +89,7 @@ func New(name string) Metric {
 		Dimensions: make(map[string]string),
 		Time:       time.Now(),
 		Buffered:   false,
+		AggEnabled: false,
 	}
 }
 
@@ -48,6 +102,7 @@ func NewExt(name string, typ string, val float64, d map[string]string, t time.Ti
 		Dimensions: d,
 		Time:       t,
 		Buffered:   b,
+		AggEnabled: false,
 	}
 }
 

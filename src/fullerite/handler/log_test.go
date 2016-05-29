@@ -50,5 +50,5 @@ func TestConvertToLog(t *testing.T) {
 		t.Errorf("convertToLog failed to convert %q: err", m, err)
 	}
 	nowFmt := now.Format(time.RFC3339Nano)
-	assert.Equal(t, fmt.Sprintf("{\"name\":\"TestMetric\",\"type\":\"gauge\",\"value\":0,\"dimensions\":{},\"buffered\":false,\"time\":\"%s\"}", nowFmt), dpString)
+	assert.Equal(t, fmt.Sprintf("{\"name\":\"TestMetric\",\"type\":\"gauge\",\"value\":0,\"dimensions\":{},\"buffered\":false,\"time\":\"%s\",\"agg-enabled\":false}", nowFmt), dpString)
 }

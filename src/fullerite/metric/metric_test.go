@@ -3,8 +3,8 @@ package metric_test
 import (
 	"encoding/json"
 	"fullerite/metric"
-
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -391,6 +391,13 @@ func TestIsSubDim(t *testing.T) {
 	assert.False(t, m.IsSubDim(other), "other[dim3] has different key then my[dim3]")
 }
 
+func TestGetFilterID(t *testing.T) {
+	m := metric.New("TestMetric")
+	m.AddDimension("dim1", "1")
+	m.AddDimension("dim2", "2")
+	assert.Equal(t, "TestMetric_gauge_dim1:1_dim2:2", m.GetFilterID())
+}
+
 func TestIsFiltered(t *testing.T) {
 	m := metric.New("TestMetric")
 	m.AddDimension("dim1", "1")
@@ -409,4 +416,23 @@ func TestIsFiltered(t *testing.T) {
 	assert.False(t, m.IsFiltered(f), "Should not map due to dimensions")
 	f = metric.NewFilter("Fail.*", "gauge", good)
 	assert.False(t, m.IsFiltered(f), "Should not map due to Name")
+}
+
+func TestAggregateList(t *testing.T) {
+	ms := []metric.Metric{}
+	d := map[string]string{
+		"dim1": "1",
+	}
+	var lastT time.Time
+	for i := 0; i < 5; i++ {
+		lastT = time.Now()
+		m := metric.NewExt("test", "gauge", float64(i), d, lastT, false)
+		ms = append(ms, m)
+		time.Sleep(100 * time.Millisecond)
+	}
+	res := metric.AggregateList(ms)
+	exp := []metric.Metric{
+		metric.NewExt("test", "gauge", 2.0, d, lastT, false),
+	}
+	assert.Equal(t, exp, res)
 }
