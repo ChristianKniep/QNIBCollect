@@ -88,11 +88,34 @@ func TestConvertToOpenTSDBHandler(t *testing.T) {
 // TestConvertToOpenTSDBHandlerDims tests the handler convertion with dimensions
 func TestConvertToOpenTSDBHandlerDims(t *testing.T) {
 	config := map[string]interface{}{
-		"interval":        "10",
-		"timeout":         "10",
-		"max_buffer_size": "100",
-		"server":          "test_server",
-		"port":            10101,
+		"server": "test_server",
+		"port":   10101,
+	}
+
+	g := getTestOpenTSDBHandler(12, 13, 14)
+	g.Configure(config)
+
+	waitForSplitSecond()
+	now := time.Now().Unix()
+	m := metric.New("TestMetric")
+
+	dims := map[string]string{
+		"container_id":   "test-id",
+		"container_name": "test-container",
+	}
+	m.Dimensions = dims
+
+	dpString := g.convertToOpenTSDBHandler(m)
+
+	assert.Equal(t, fmt.Sprintf("put TestMetric %d 0.000000 container_id=test-id,container_name=test-container\n", now), dpString)
+}
+
+// TestConvertToOpenTSDBHandlerDimsOldFormat tests the handler convertion with dimensions
+func TestConvertToOpenTSDBHandlerDimsOldFormat(t *testing.T) {
+	config := map[string]interface{}{
+		"server":    "test_server",
+		"port":      10101,
+		"oldformat": true,
 	}
 
 	g := getTestOpenTSDBHandler(12, 13, 14)

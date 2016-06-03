@@ -18,9 +18,9 @@ func init() {
 // OpenTSDBHandler type
 type OpenTSDBHandler struct {
 	BaseHandler
-	server     string
-	port       string
-	prefixKeys bool
+	server    string
+	port      string
+	oldFormat bool
 }
 
 // newOpenTSDBHandler returns a new Graphite handler.
@@ -66,6 +66,11 @@ func (h *OpenTSDBHandler) Configure(configMap map[string]interface{}) {
 	} else {
 		h.log.Error("There was no port specified for the OpenTSDB Handler, there won't be any emissions")
 	}
+	if oldf, exists := configMap["oldformat"]; exists {
+		h.oldFormat = oldf.(bool)
+	} else {
+		h.oldFormat = false
+	}
 	h.configureCommonParams(configMap)
 }
 
@@ -91,7 +96,11 @@ func (h OpenTSDBHandler) convertToOpenTSDBHandler(incomingMetric metric.Metric) 
 	if len(dimensions) == 0 {
 		datapoint = fmt.Sprintf("%s %d %f\n", datapoint, incomingMetric.GetTime().Unix(), incomingMetric.Value)
 	} else {
-		datapoint = fmt.Sprintf("%s %s %d %f\n", datapoint, strings.Join(dims[:], ","), incomingMetric.GetTime().Unix(), incomingMetric.Value)
+		if h.oldFormat {
+			datapoint = fmt.Sprintf("%s %s %d %f\n", datapoint, strings.Join(dims[:], ","), incomingMetric.GetTime().Unix(), incomingMetric.Value)
+		} else {
+			datapoint = fmt.Sprintf("%s %d %f %s\n", datapoint, incomingMetric.GetTime().Unix(), incomingMetric.Value, strings.Join(dims[:], ","))
+		}
 	}
 	return datapoint
 }
@@ -112,7 +121,9 @@ func (h *OpenTSDBHandler) emitMetrics(metrics []metric.Metric) bool {
 	}
 
 	for _, m := range metrics {
-		fmt.Fprintf(conn, h.convertToOpenTSDBHandler(m))
+		str := h.convertToOpenTSDBHandler(m)
+		h.log.Debug(str)
+		fmt.Fprintf(conn, str)
 	}
 	return true
 }

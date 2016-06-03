@@ -54,7 +54,7 @@ func TestOpenTSBDCollect(t *testing.T) {
 	require.Nil(t, err, "should connect")
 	require.NotNil(t, conn, "should connect")
 
-	fmt.Fprintf(conn, "put sys.cpu.user host=webserver01,cpu=0 1356998400 1\n")
+	fmt.Fprintf(conn, "put sys.cpu.user 1356998400 1 host=webserver01,cpu=0\n")
 
 	select {
 	case m := <-c.Channel():
@@ -65,8 +65,10 @@ func TestOpenTSBDCollect(t *testing.T) {
 }
 
 func TestParseOpenTSDBMetric(t *testing.T) {
-	rawData := "put sys.cpu.user host=webserver01,cpu=0 1356998400 1"
-	c := newOpenTSDB(nil, 12, nil).(*OpenTSDB)
+	rawData := "put sys.cpu.user 1356998400 1 host=webserver01,cpu=0"
+	testChannel := make(chan metric.Metric)
+	testLog := test_utils.BuildLogger()
+	c := newOpenTSDB(testChannel, 123, testLog).(*OpenTSDB)
 	var conf map[string]interface{}
 	c.Configure(conf)
 	m, ok := c.parseMetric(rawData)
@@ -81,9 +83,23 @@ func TestParseOpenTSDBMetric(t *testing.T) {
 }
 
 func TestInvalidOpenTSDBToMetric(t *testing.T) {
-	rawData := "put 1356998400 host=webserver01,cpu=0 1"
-	c := newOpenTSDB(nil, 12, nil).(*OpenTSDB)
+	rawData := "put 1356998400 1 host=webserver01,cpu=0"
+	testChannel := make(chan metric.Metric)
+	testLog := test_utils.BuildLogger()
+	c := newOpenTSDB(testChannel, 123, testLog).(*OpenTSDB)
 	var conf map[string]interface{}
+	c.Configure(conf)
+	_, ok := c.parseMetric(rawData)
+	assert.False(t, ok)
+}
+
+func TestInvalidOpenTSDBToMetricDimFirst(t *testing.T) {
+	rawData := "put 1356998400 host=webserver01,cpu=0 1"
+	testChannel := make(chan metric.Metric)
+	testLog := test_utils.BuildLogger()
+	c := newOpenTSDB(testChannel, 123, testLog).(*OpenTSDB)
+	conf := make(map[string]interface{})
+	conf["dimfirst"] = "true"
 	c.Configure(conf)
 	_, ok := c.parseMetric(rawData)
 	assert.False(t, ok)

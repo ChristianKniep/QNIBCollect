@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"fullerite/metric"
+	"io"
 	"net"
 	"regexp"
 	"strconv"
@@ -18,7 +19,9 @@ const (
 	//DefaultOpenTSDBCollectorPort is the TCP port that OpenTSDB clients will push data to
 	DefaultOpenTSDBCollectorPort = "4242"
 	// MetricRegex provides the default OpenTSDB regex
-	MetricRegex = `put (?P<name>[0-9\.\-\_a-zA-Z]+)\s+(?P<dimensions>[0-9\.\-\_\=\,a-zA-Z]+)\s+(?P<time>\d+)\s+(?P<value>[0-9\.]+)`
+	MetricRegex = `put (?P<name>[0-9\.\-\_a-zA-Z]+)\s+(?P<time>\d+)\s+(?P<value>[0-9\.]+)\s+(?P<dimensions>[0-9\.\-\_\=\,a-zA-Z]+)`
+	// MetricRegexDimsFirst provides a regex in which the dimensions are put behind the name
+	MetricRegexDimsFirst = `put (?P<name>[0-9\.\-\_a-zA-Z]+)\s+(?P<dimensions>[0-9\.\-\_\=\,a-zA-Z]+)\s+(?P<time>\d+)\s+(?P<value>[0-9\.]+)`
 )
 
 // OpenTSDB collector type
@@ -28,6 +31,7 @@ type OpenTSDB struct {
 	serverStarted bool
 	metricRegex   *regexp.Regexp
 	incoming      chan string
+	dimsFirst     bool
 }
 
 func init() {
@@ -55,10 +59,22 @@ func (c *OpenTSDB) Configure(configMap map[string]interface{}) {
 	if port, exists := configMap["port"]; exists {
 		c.port = port.(string)
 	}
+	if dfirst, exists := configMap["dimsfirst"]; exists {
+		c.dimsFirst = dfirst.(bool)
+	} else {
+		c.dimsFirst = false
+	}
 	if regex, exists := configMap["metric-regex"]; exists {
 		c.metricRegex = regexp.MustCompile(regex.(string))
 	} else {
-		c.metricRegex = regexp.MustCompile(MetricRegex)
+		if c.dimsFirst {
+			//c.log.Debug(MetricRegexDimsFirst)
+			c.metricRegex = regexp.MustCompile(MetricRegexDimsFirst)
+		} else {
+			//c.log.Debug(MetricRegex)
+			c.metricRegex = regexp.MustCompile(MetricRegex)
+		}
+
 	}
 	c.configureCommonParams(configMap)
 }
@@ -104,7 +120,9 @@ func (c *OpenTSDB) readOpenTSDBMetrics(conn *net.TCPConn) {
 	c.log.Info("Connection started: ", conn.RemoteAddr())
 	for {
 		line, err := reader.ReadBytes('\n')
-		if err != nil {
+		if err == io.EOF {
+			break
+		} else if err != nil {
 			c.log.Warn("Error while reading OpenTSDB metrics", err)
 			break
 		}
@@ -130,23 +148,43 @@ func (c *OpenTSDB) Collect() {
 }
 
 func (c *OpenTSDB) parseMetric(line string) (metric.Metric, bool) {
+	c.log.Info(line)
 	match := c.metricRegex.FindStringSubmatch(line)
-	if match == nil {
+	c.log.Info(fmt.Sprintf("%#v\n", match))
+	c.log.Info(len(match))
+	if len(match) == 0 {
 		msg := fmt.Sprintf("could not match '%s' against regex", line)
 		return metric.New(msg), false
 	}
+	c.log.Info("durch...")
 	dims := map[string]string{}
-	for _, item := range strings.Split(match[2], ",") {
-		i := strings.Split(item, "=")
-		dims[i[0]] = i[1]
+	var tm time.Time
+	var v int
+	// TODO: This should be propperly done
+	if c.dimsFirst {
+		for _, item := range strings.Split(match[2], ",") {
+			x := strings.Split(item, "=")
+			dims[x[0]] = x[1]
+		}
+		i, err := strconv.ParseInt(match[3], 10, 64)
+		if err != nil {
+			msg := fmt.Sprintf("Not an UNIX epoch '%s'", match[3])
+			return metric.New(msg), false
+		}
+		tm = time.Unix(i, 0)
+		v, _ = strconv.Atoi(match[4])
+	} else {
+		for _, item := range strings.Split(match[4], ",") {
+			x := strings.Split(item, "=")
+			dims[x[0]] = x[1]
+		}
+		i, err := strconv.ParseInt(match[2], 10, 64)
+		if err != nil {
+			msg := fmt.Sprintf("Not an UNIX epoch '%s'", match[2])
+			return metric.New(msg), false
+		}
+		tm = time.Unix(i, 0)
+		v, _ = strconv.Atoi(match[3])
 	}
-	i, err := strconv.ParseInt(match[3], 10, 64)
-	if err != nil {
-		msg := fmt.Sprintf("Not an UNIX epoch '%s'", match[3])
-		return metric.New(msg), false
-	}
-	tm := time.Unix(i, 0)
-	v, _ := strconv.Atoi(match[4])
-	m := metric.NewExt(match[1], "gauge", float64(v), dims, tm, false)
-	return m, true
+	return metric.NewExt(match[1], "gauge", float64(v), dims, tm, false), true
 }
