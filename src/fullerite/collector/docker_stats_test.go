@@ -4,14 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"fullerite/metric"
-	"io/ioutil"
 	"reflect"
 	"testing"
 	"time"
 
 	l "github.com/Sirupsen/logrus"
-	"github.com/docker/engine-api/client"
-	"github.com/docker/engine-api/types"
+	dTypes "github.com/docker/engine-api/types"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -93,56 +91,33 @@ func TestDockerStatsBuildMetrics(t *testing.T) {
 	assert.Equal(t, err, nil)
 	config["generatedDimensions"] = val
 
-	stats := new(docker.Stats)
-	stats.Networks = make(map[string]docker.NetworkStats)
-	stats.Networks["eth0"] = docker.NetworkStats{RxBytes: 10, TxBytes: 20}
+	stats := new(dTypes.Stats)
 	stats.MemoryStats.Usage = 50
 	stats.MemoryStats.Limit = 70
 
 	containerJSON := []byte(`
 	{
 		"ID": "test-id",
-		"Name": "test-container",
-		"Config": {
-			"Env": [
-				"MESOS_TASK_ID=my--service.main.blablagit6bdsadnoise"
-			]
-		}
+		"Name": "test-container"
 	}`)
-	var container *docker.Container
+	var container *dTypes.Container
 	err = json.Unmarshal(containerJSON, &container)
 	assert.Equal(t, err, nil)
 
 	baseDims := map[string]string{
 		"container_id":   "test-id",
 		"container_name": "test-container",
-		"service_name":   "my_service",
-		"instance_name":  "main",
-	}
-	netDims := map[string]string{
-		"container_id":   "test-id",
-		"container_name": "test-container",
-		"service_name":   "my_service",
-		"instance_name":  "main",
-		"iface":          "eth0",
-	}
-
-	expectedDimsGen := map[string]string{
-		"service_name":  "my_service",
-		"instance_name": "main",
 	}
 	now := time.Now()
 	expectedMetrics := []metric.Metric{
-		metric.NewExt("DockerRxBytes", "cumcounter", 10, netDims, now, false),
-		metric.NewExt("DockerTxBytes", "cumcounter", 20, netDims, now, false),
 		metric.NewExt("DockerMemoryUsed", "gauge", 50, baseDims, now, false),
 		metric.NewExt("DockerMemoryLimit", "gauge", 70, baseDims, now, false),
 		metric.NewExt("DockerCpuPercentage", "gauge", 0.5, baseDims, now, false),
-		metric.NewExt("DockerContainerCount", "counter", 1, expectedDimsGen, now, false),
+		metric.NewExt("DockerContainerCount", "counter", 1, baseDims, now, false),
 	}
 	d := getSUT()
 	d.Configure(config)
-	ret := d.buildMetrics(container, stats, 0.5)
+	ret := d.buildMetrics(*container, stats, 0.5)
 	var newMet metric.Metric
 	for _, met := range ret {
 		newMet = metric.NewExt(met.Name, met.MetricType, met.Value, met.Dimensions, now, false)
@@ -154,9 +129,7 @@ func TestDockerStatsBuildMetricsWithBufferRegex(t *testing.T) {
 	config := make(map[string]interface{})
 	config["bufferRegex"] = "DockerMemory.*"
 
-	stats := new(docker.Stats)
-	stats.Networks = make(map[string]docker.NetworkStats)
-	stats.Networks["eth0"] = docker.NetworkStats{RxBytes: 10, TxBytes: 20}
+	stats := new(dTypes.Stats)
 	stats.MemoryStats.Usage = 50
 	stats.MemoryStats.Limit = 70
 
@@ -170,7 +143,7 @@ func TestDockerStatsBuildMetricsWithBufferRegex(t *testing.T) {
 			]
 		}
 	}`)
-	var container *docker.Container
+	var container *dTypes.Container
 	err := json.Unmarshal(containerJSON, &container)
 	assert.Equal(t, err, nil)
 
@@ -183,16 +156,17 @@ func TestDockerStatsBuildMetricsWithBufferRegex(t *testing.T) {
 		"container_name": "test-container",
 		"iface":          "eth0",
 	}
+	_ = netDims
 
 	expectedDimsGen := map[string]string{}
 	now := time.Now()
 	expectedMetrics := []metric.Metric{
-		metric.NewExt("DockerRxBytes", "cumcounter", 10, netDims, now, false),
-		metric.NewExt("DockerTxBytes", "cumcounter", 20, netDims, now, false),
+		//metric.NewExt("DockerRxBytes", "cumcounter", 10, netDims, now, false),
+		//metric.NewExt("DockerTxBytes", "cumcounter", 20, netDims, now, false),
 		metric.NewExt("DockerMemoryUsed", "gauge", 50, baseDims, now, true),
 		metric.NewExt("DockerMemoryLimit", "gauge", 70, baseDims, now, true),
 		metric.NewExt("DockerCpuPercentage", "gauge", 0.5, baseDims, now, false),
-		metric.NewExt("DockerContainerCount", "counter", 1, expectedDimsGen, now, false),
+		metric.NewExt("DockerContainerCount", "counter", 1, baseDims, now, false),
 	}
 
 	d := getSUT()
@@ -219,7 +193,7 @@ func TestDockerStatsBuildMetricsWithNameAsEnvVariable(t *testing.T) {
 	assert.Equal(t, err, nil)
 	config["generatedDimensions"] = val
 
-	stats := new(docker.Stats)
+	stats := new(dTypes.Stats)
 	stats.MemoryStats.Usage = 50
 	stats.MemoryStats.Limit = 70
 
@@ -233,26 +207,28 @@ func TestDockerStatsBuildMetricsWithNameAsEnvVariable(t *testing.T) {
 			]
 		}
 	}`)
-	var container *docker.Container
+	var container *dTypes.Container
 	err = json.Unmarshal(containerJSON, &container)
 	assert.Equal(t, err, nil)
 
 	expectedDims := map[string]string{
 		"container_id":   "test-id",
 		"container_name": "test-container",
-		"service_name":   "my_service",
+		//"service_name":   "my_service",
 	}
 	expectedDimsGen := map[string]string{
 		"service_name": "my_service",
 	}
+	_ = expectedDimsGen
 	now := time.Now()
 	expectedMetrics := []metric.Metric{
-		metric.NewExt("DockerRxBytes", "cumcounter", 10, expectedDims, now, false),
-		metric.NewExt("DockerTxBytes", "cumcounter", 20, expectedDims, now, false),
+		//metric.NewExt("DockerRxBytes", "cumcounter", 10, expectedDims, now, false),
+		//metric.NewExt("DockerTxBytes", "cumcounter", 20, expectedDims, now, false),
 		metric.NewExt("DockerMemoryUsed", "gauge", 50, expectedDims, now, false),
 		metric.NewExt("DockerMemoryLimit", "gauge", 70, expectedDims, now, false),
 		metric.NewExt("DockerCpuPercentage", "gauge", 0.5, expectedDims, now, false),
-		metric.NewExt("DockerContainerCount", "counter", 1, expectedDimsGen, now, false),
+		metric.NewExt("DockerContainerCount", "counter", 1, expectedDims, now, false),
+		//metric.NewExt("DockerContainerCount", "counter", 1, expectedDimsGen, now, false),
 	}
 
 	d := getSUT()
@@ -269,17 +245,17 @@ func TestDockerStatsCalculateCPUPercent(t *testing.T) {
 	var previousTotalUsage = uint64(0)
 	var previousSystem = uint64(0)
 
-	stats := new(docker.Stats)
+	stats := new(dTypes.Stats)
 	stats.CPUStats.CPUUsage.PercpuUsage = make([]uint64, 24)
 	stats.CPUStats.CPUUsage.TotalUsage = 1261158030354
-	stats.CPUStats.SystemCPUUsage = 108086414700000000
+	stats.CPUStats.SystemUsage = 108086414700000000
 
 	assert.Equal(t, 0.02800332753427522, calculateCPUPercent(previousTotalUsage, previousSystem, stats))
 
 	previousTotalUsage = stats.CPUStats.CPUUsage.TotalUsage
-	previousSystem = stats.CPUStats.SystemCPUUsage
+	previousSystem = stats.CPUStats.SystemUsage
 	stats.CPUStats.CPUUsage.TotalUsage = 1261164064229
-	stats.CPUStats.SystemCPUUsage = 108086652820000000
+	stats.CPUStats.SystemUsage = 108086652820000000
 
 	assert.Equal(t, 0.060815135225936505, calculateCPUPercent(previousTotalUsage, previousSystem, stats))
 }
