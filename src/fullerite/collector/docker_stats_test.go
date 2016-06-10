@@ -7,9 +7,12 @@ import (
 	"reflect"
 	"testing"
 	"time"
+	"io/ioutil"
+
 
 	l "github.com/Sirupsen/logrus"
-	"github.com/fsouza/go-dockerclient"
+	"github.com/docker/engine-api/client"
+	"github.com/docker/engine-api/types"
 	"github.com/stretchr/testify/assert"
 )
 

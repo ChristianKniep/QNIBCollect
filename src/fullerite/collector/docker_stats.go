@@ -8,10 +8,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"io/ioutil"
+	"golang.org/x/net/context"
 
 	l "github.com/Sirupsen/logrus"
-
-	"github.com/fsouza/go-dockerclient"
+	dClient "github.com/docker/engine-api/client"
+	dTypes "github.com/docker/engine-api/types"
 )
 
 const (
@@ -24,7 +26,7 @@ const (
 type DockerStats struct {
 	baseCollector
 	previousCPUValues map[string]*CPUValues
-	dockerClient      *docker.Client
+	dockerClient      *dClient.Client
 	statsTimeout      int
 	compiledRegex     map[string]*Regex
 	skipRegex         *regexp.Regexp
@@ -87,7 +89,8 @@ func (d *DockerStats) Configure(configMap map[string]interface{}) {
 	} else {
 		d.endpoint = endpoint
 	}
-	d.dockerClient, _ = docker.NewClient(d.endpoint)
+	// Set ENV DOCKER_HOST
+	d.dockerClient, _ = dClient.NewEnvClient()
 	if generatedDimensions, exists := configMap["generatedDimensions"]; exists {
 		for dimension, generator := range generatedDimensions.(map[string]interface{}) {
 			for key, regx := range config.GetAsMap(generator) {
@@ -117,13 +120,14 @@ func (d *DockerStats) Collect() {
 		d.log.Error("Invalid endpoint: ", docker.ErrInvalidEndpoint)
 		return
 	}
-	containers, err := d.dockerClient.ListContainers(docker.ListContainersOptions{All: false})
+	options := types.ContainerListOptions{All: false}
+	containers, err := d.dockerClient.ContainerList(context.Background(), options)
 	if err != nil {
 		d.log.Error("ListContainers() failed: ", err)
 		return
 	}
-	for _, apiContainer := range containers {
-		container, err := d.dockerClient.InspectContainer(apiContainer.ID)
+	for _, cnt := range containers {
+		container, err := d.dockerClient.ContainerStats(context.Background(), cnt.ID, false)
 		contName := strings.TrimPrefix(container.Name, "/")
 		if err != nil {
 			d.log.Error("InspectContainer() failed: ", err)
