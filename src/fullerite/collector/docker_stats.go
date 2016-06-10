@@ -1,15 +1,16 @@
 package collector
 
 import (
+	"encoding/json"
 	"fullerite/config"
 	"fullerite/metric"
+	"golang.org/x/net/context"
+	"io/ioutil"
 	"reflect"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
-	"io/ioutil"
-	"golang.org/x/net/context"
 
 	l "github.com/Sirupsen/logrus"
 	dClient "github.com/docker/engine-api/client"
@@ -116,19 +117,14 @@ func (d *DockerStats) Configure(configMap map[string]interface{}) {
 // memory and cpu statistics.
 // For each container a gorutine is started to spin up the collection process.
 func (d *DockerStats) Collect() {
-	if d.dockerClient == nil {
-		d.log.Error("Invalid endpoint: ", docker.ErrInvalidEndpoint)
-		return
-	}
-	options := types.ContainerListOptions{All: false}
+	options := dTypes.ContainerListOptions{All: false}
 	containers, err := d.dockerClient.ContainerList(context.Background(), options)
 	if err != nil {
 		d.log.Error("ListContainers() failed: ", err)
 		return
 	}
 	for _, cnt := range containers {
-		container, err := d.dockerClient.ContainerStats(context.Background(), cnt.ID, false)
-		contName := strings.TrimPrefix(container.Name, "/")
+		contName := strings.TrimPrefix(cnt.Names[0], "/")
 		if err != nil {
 			d.log.Error("InspectContainer() failed: ", err)
 			continue
@@ -138,22 +134,25 @@ func (d *DockerStats) Collect() {
 			d.log.Debug("Skip container: ", contName)
 			continue
 		}
-		if _, ok := d.previousCPUValues[container.ID]; !ok {
-			d.previousCPUValues[container.ID] = new(CPUValues)
+		if _, ok := d.previousCPUValues[cnt.ID]; !ok {
+			d.previousCPUValues[cnt.ID] = new(CPUValues)
 		}
-		go d.getDockerContainerInfo(container)
+		go d.getDockerContainerInfo(cnt)
 	}
 }
 
 // getDockerContainerInfo gets container statistics for the given container.
 // results is a channel to make possible the synchronization between the main process and the gorutines (wait-notify pattern).
-func (d *DockerStats) getDockerContainerInfo(container *docker.Container) {
+func (d *DockerStats) getDockerContainerInfo(container dTypes.Container) {
 	errC := make(chan error, 1)
-	statsC := make(chan *docker.Stats, 1)
+	statsC := make(chan []byte, 1)
 	done := make(chan bool, 1)
 
 	go func() {
-		errC <- d.dockerClient.Stats(docker.StatsOptions{container.ID, statsC, false, done, time.Second * time.Duration(d.interval), time.Second * time.Duration(d.interval)})
+		body, _ := d.dockerClient.ContainerStats(context.Background(), container.ID, false)
+		defer body.Close()
+		stats, _ := ioutil.ReadAll(body)
+		statsC <- stats
 	}()
 	select {
 	case stats, ok := <-statsC:
@@ -163,10 +162,8 @@ func (d *DockerStats) getDockerContainerInfo(container *docker.Container) {
 			break
 		}
 		done <- true
-
 		metrics := d.extractMetrics(container, stats)
 		d.sendMetrics(metrics)
-
 		break
 	case <-time.After(time.Duration(d.statsTimeout) * time.Second):
 		d.log.Error("Timed out collecting stats for container ", container.ID)
@@ -175,24 +172,29 @@ func (d *DockerStats) getDockerContainerInfo(container *docker.Container) {
 	}
 }
 
-func (d *DockerStats) extractMetrics(container *docker.Container, stats *docker.Stats) []metric.Metric {
+func (d *DockerStats) extractMetrics(container dTypes.Container, stats []byte) []metric.Metric {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	metrics := d.buildMetrics(container, stats, calculateCPUPercent(d.previousCPUValues[container.ID].totCPU, d.previousCPUValues[container.ID].systemCPU, stats))
+	var dstats dTypes.Stats
+	err := json.Unmarshal(stats, &dstats)
+	if err != nil {
+		d.log.Warn("Something went wrong...", err)
+	}
+	metrics := d.buildMetrics(container, dstats, calculateCPUPercent(d.previousCPUValues[container.ID].totCPU, d.previousCPUValues[container.ID].systemCPU, dstats))
 
-	d.previousCPUValues[container.ID].totCPU = stats.CPUStats.CPUUsage.TotalUsage
-	d.previousCPUValues[container.ID].systemCPU = stats.CPUStats.SystemCPUUsage
+	d.previousCPUValues[container.ID].totCPU = dstats.CPUStats.CPUUsage.TotalUsage
+	d.previousCPUValues[container.ID].systemCPU = dstats.CPUStats.SystemUsage
 	return metrics
 }
 
 // buildMetrics creates the actual metrics for the given container.
-func (d DockerStats) buildMetrics(container *docker.Container, containerStats *docker.Stats, cpuPercentage float64) []metric.Metric {
+func (d DockerStats) buildMetrics(container dTypes.Container, containerStats dTypes.Stats, cpuPercentage float64) []metric.Metric {
 	ret := []metric.Metric{
 		d.buildDockerMetric("DockerMemoryUsed", metric.Gauge, float64(containerStats.MemoryStats.Usage)),
 		d.buildDockerMetric("DockerMemoryLimit", metric.Gauge, float64(containerStats.MemoryStats.Limit)),
 		d.buildDockerMetric("DockerCpuPercentage", metric.Gauge, cpuPercentage),
 	}
-	for netiface := range containerStats.Networks {
+	/*for netiface := range containerStats.Networks {
 		// legacy format
 		txb := d.buildDockerMetric("DockerTxBytes", metric.CumulativeCounter, float64(containerStats.Networks[netiface].TxBytes))
 		txb.AddDimension("iface", netiface)
@@ -200,14 +202,15 @@ func (d DockerStats) buildMetrics(container *docker.Container, containerStats *d
 		rxb := d.buildDockerMetric("DockerRxBytes", metric.CumulativeCounter, float64(containerStats.Networks[netiface].RxBytes))
 		rxb.AddDimension("iface", netiface)
 		ret = append(ret, rxb)
-	}
+	}*/
 	additionalDimensions := map[string]string{
 		"container_id":   container.ID,
-		"container_name": strings.TrimPrefix(container.Name, "/"),
+		"container_name": strings.TrimPrefix(container.Names[0], "/"),
 	}
 	metric.AddToAll(&ret, additionalDimensions)
 	ret = append(ret, d.buildDockerMetric("DockerContainerCount", metric.Counter, 1))
-	metric.AddToAll(&ret, d.extractDimensions(container))
+	// TODO: Do we need this?
+	// metric.AddToAll(&ret, d.extractDimensions(container))
 
 	return ret
 }
@@ -221,7 +224,7 @@ func (d DockerStats) sendMetrics(metrics []metric.Metric) {
 
 // Function that extracts additional dimensions from the docker environmental variables set up by the user
 // in the configuration file.
-func (d DockerStats) extractDimensions(container *docker.Container) map[string]string {
+/*func (d DockerStats) extractDimensions(container dTypes.Container) map[string]string {
 	envVars := container.Config.Env
 	ret := map[string]string{}
 
@@ -239,6 +242,7 @@ func (d DockerStats) extractDimensions(container *docker.Container) map[string]s
 	d.log.Debug(ret)
 	return ret
 }
+*/
 
 func (d DockerStats) buildDockerMetric(name string, metricType string, value float64) (m metric.Metric) {
 	m = metric.New(name)
@@ -252,13 +256,13 @@ func (d DockerStats) buildDockerMetric(name string, metricType string, value flo
 }
 
 // Function that compute the current cpu usage percentage combining current and last values.
-func calculateCPUPercent(previousCPU, previousSystem uint64, stats *docker.Stats) float64 {
+func calculateCPUPercent(previousCPU, previousSystem uint64, stats dTypes.Stats) float64 {
 	var (
 		cpuPercent = 0.0
 		// calculate the change for the cpu usage of the container in between readings
 		cpuDelta = float64(stats.CPUStats.CPUUsage.TotalUsage - previousCPU)
 		// calculate the change for the entire system between readings
-		systemDelta = float64(stats.CPUStats.SystemCPUUsage - previousSystem)
+		systemDelta = float64(stats.CPUStats.SystemUsage - previousSystem)
 	)
 
 	if systemDelta > 0.0 && cpuDelta > 0.0 {

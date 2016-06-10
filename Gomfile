@@ -13,3 +13,6 @@ gom "github.com/samuel/go-thrift", :commit => 'ca819cf963ab710e7a285044e92f1353f
 gom "github.com/influxdata/influxdb/client/v2"
 gom "github.com/qnib/zmq4", :tag => "trimmed_down"
 gom 'github.com/ChristianKniep/go-mettring'
+gom "github.com/docker/engine-api/client"
+gom "github.com/docker/engine-api/types"
+gom "golang.org/x/net/context"

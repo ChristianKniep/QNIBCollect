@@ -4,11 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"fullerite/metric"
+	"io/ioutil"
 	"reflect"
 	"testing"
 	"time"
-	"io/ioutil"
-
 
 	l "github.com/Sirupsen/logrus"
 	"github.com/docker/engine-api/client"
