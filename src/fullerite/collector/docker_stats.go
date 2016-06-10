@@ -203,15 +203,17 @@ func (d DockerStats) buildMetrics(container dTypes.Container, containerStats dTy
 		rxb.AddDimension("iface", netiface)
 		ret = append(ret, rxb)
 	}*/
+
 	additionalDimensions := map[string]string{
 		"container_id":   container.ID,
 		"container_name": strings.TrimPrefix(container.Names[0], "/"),
 	}
 	metric.AddToAll(&ret, additionalDimensions)
-	ret = append(ret, d.buildDockerMetric("DockerContainerCount", metric.Counter, 1))
-	// TODO: Do we need this?
-	// metric.AddToAll(&ret, d.extractDimensions(container))
-
+	/*
+		ret = append(ret, d.buildDockerMetric("DockerContainerCount", metric.Counter, 1))
+		// TODO: Do we need this?
+		// metric.AddToAll(&ret, d.extractDimensions(container))
+	*/
 	return ret
 }
 
