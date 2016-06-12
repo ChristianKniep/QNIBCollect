@@ -91,7 +91,7 @@ func (d *DockerStats) Configure(configMap map[string]interface{}) {
 		d.endpoint = endpoint
 	}
 	// Set ENV DOCKER_HOST
-	d.dockerClient, _ = dClient.NewEnvClient()
+	d.dockerClient = d.createClient()
 	if generatedDimensions, exists := configMap["generatedDimensions"]; exists {
 		for dimension, generator := range generatedDimensions.(map[string]interface{}) {
 			for key, regx := range config.GetAsMap(generator) {
@@ -111,6 +111,11 @@ func (d *DockerStats) Configure(configMap map[string]interface{}) {
 		d.bufferRegex = regexp.MustCompile(bufferRegex.(string))
 	}
 	d.configureCommonParams(configMap)
+}
+
+func (d *DockerStats) createClient() *dClient.Client {
+	client, _ := dClient.NewEnvClient()
+	return client
 }
 
 // Collect iterates on all the docker containers alive and, if possible, collects the correspondent
