@@ -85,7 +85,7 @@ func TestConvertToInfluxDB(t *testing.T) {
 	// Create Metric
 	m := metric.New("TestMetric")
 	// Create datapoint
-	pt := i.createDatapoint(m)
+	pt := i.convertToInfluxDB(m)
 	dbString := "TestMetric value=0 [0-9]+"
 	fmt.Println(dbString)
 	msg := fmt.Sprintf("'%s' does not match expected '%s'", pt.String(), dbString)

@@ -3,10 +3,11 @@ package handler
 import (
 	"fmt"
 	"fullerite/metric"
+	"log"
 	"time"
 
 	l "github.com/Sirupsen/logrus"
-	influxClient "github.com/influxdata/influxdb/client/v2"
+	"github.com/influxdata/influxdb/client/v2"
 )
 
 func init() {
@@ -21,6 +22,7 @@ type InfluxDB struct {
 	database string
 	username string
 	password string
+	influxdb client.Client
 }
 
 // newInfluxDB returns a new InfluxDB handler.
@@ -79,6 +81,18 @@ func (i *InfluxDB) Configure(configMap map[string]interface{}) {
 	} else {
 		i.log.Error("There was no database specified for the InfluxDB Handler, there won't be any emissions")
 	}
+	// Make client
+	addr := fmt.Sprintf("http://%s:%s", i.server, i.port)
+
+	var err error
+	i.influxdb, err = client.NewHTTPClient(client.HTTPConfig{
+		Addr:     addr,
+		Username: i.username,
+		Password: i.password,
+	})
+	if err != nil {
+		i.log.Warn("Error: ", err)
+	}
 	i.configureCommonParams(configMap)
 }
 
@@ -87,13 +101,16 @@ func (i *InfluxDB) Run() {
 	i.run(i.emitMetrics)
 }
 
-func (i InfluxDB) createDatapoint(incomingMetric metric.Metric) (datapoint *influxClient.Point) {
+func (i InfluxDB) convertToInfluxDB(incomingMetric metric.Metric) (datapoint *client.Point) {
 	tags := incomingMetric.GetDimensions(i.DefaultDimensions())
 	// Assemble field (could be improved to convey multiple fields)
 	fields := map[string]interface{}{
 		"value": incomingMetric.Value,
 	}
-	pt, _ := influxClient.NewPoint(incomingMetric.Name, tags, fields, incomingMetric.GetTime())
+	pt, err := client.NewPoint(incomingMetric.Name, tags, fields, incomingMetric.Time)
+	if err != nil {
+		log.Fatalln("Error: ", err)
+	}
 	return pt
 }
 
@@ -105,30 +122,21 @@ func (i *InfluxDB) emitMetrics(metrics []metric.Metric) bool {
 		return false
 	}
 
-	// Make client
-	addr := fmt.Sprintf("http://%s:%s", i.server, i.port)
-	c, err := influxClient.NewHTTPClient(influxClient.HTTPConfig{
-		Addr:     addr,
-		Username: i.username,
-		Password: i.password,
-	})
-	if err != nil {
-		i.log.Warn("Not able to connect to DB: ", err)
-	} else {
-		i.log.Debug("Connected to ", addr, ", using '", i.database, "' database")
-	}
 	// Create a new point batch to be send in bulk
-	bp, _ := influxClient.NewBatchPoints(influxClient.BatchPointsConfig{
+	bp, err := client.NewBatchPoints(client.BatchPointsConfig{
 		Database:  i.database,
 		Precision: "s",
 	})
+	if err != nil {
+		log.Fatalln("Error: ", err)
+	}
 
 	//iterate over metrics
 	for _, m := range metrics {
-		bp.AddPoint(i.createDatapoint(m))
+		bp.AddPoint(i.convertToInfluxDB(m))
 	}
 
 	// Write the batch
-	c.Write(bp)
+	i.influxdb.Write(bp)
 	return true
 }
